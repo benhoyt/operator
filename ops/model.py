@@ -33,6 +33,7 @@ from subprocess import run, PIPE, CalledProcessError
 import yaml
 
 import ops
+import ops.pebble as pebble
 from ops.jujuversion import JujuVersion
 
 
@@ -160,6 +161,13 @@ class Model:
             falls back to the default binding for the relation name.
         """
         return self._bindings.get(binding_key)
+
+    def get_container(self, container_name: str) -> 'Container':
+        """Get a (Kubernetes) container by name.
+
+        TODO: use self._cache?
+        """
+        return Container(container_name)
 
 
 class _ModelCache:
@@ -983,6 +991,79 @@ class Storage:
             raw = self._backend.storage_get('{}/{}'.format(self.name, self.id), "location")
             self._location = Path(raw)
         return self._location
+
+
+class Container:
+    """Represents a named (Kubernetes) container in an application.
+
+    Attributes:
+        name: The name of the container from metadata.yaml (eg, 'postgres').
+    """
+
+    def __init__(self, name):
+        self.name = name
+
+        socket_path = '/charm/containers/{}/pebble/.pebble.socket'.format(name)
+        self._pebble = pebble.API(socket_path=socket_path)
+        self._workload = ContainerWorkload(self._pebble)
+
+    # TODO: could also be .services and ContainerServices?
+
+    @property
+    def workload(self) -> 'ContainerWorkload':
+        """Return the workload instance for this container.
+
+        A ContainerWorkload instance is a higher-level wrapper around the
+        Pebble API.
+        """
+        return self._workload
+
+    @property
+    def pebble(self) -> 'pebble.API':
+        """Return the low-level Pebble API instance for this container."""
+        return self._pebble
+
+
+class ContainerWorkload:
+    """A higher-level wrapper around the Pebble API for a workload container."""
+
+    def __init__(self, pebble):
+        self._pebble = pebble
+
+    def autostart_services(self):
+        """Autostart all default services."""
+        self._pebble.autostart_services()
+
+    def start_service(self, service_name: str):
+        """Start a single service by name."""
+        self._pebble.start_services([service_name])
+
+    def stop_service(self, service_name: str):
+        """Stop a single service by name."""
+        self._pebble.stop_services([service_name])
+
+    # TODO: should these functions take/return a Dict, or a Pythonic
+    # pebble.Config object?
+
+    # TODO: this functionality needs to be implemented in Pebble still
+
+    def add_config_layer(self, config: typing.Union[str, typing.Dict]):
+        """Dynamically add a service (Pebble) configuration layer.
+
+        Args:
+            config: A YAML string or config dict containing the Pebble
+                configuration layer.
+        """
+        if not isinstance(config, str):
+            config = yaml.dump(config, Dumper=_DefaultDumper)
+        self._pebble.add_config_layer(config)
+
+    def get_rendered_config(self) -> typing.Dict:
+        """Fetch and return the rendered configuration.
+
+        This returns the rendered configuration from merging all layers.
+        """
+        return self._pebble.get_rendered_config()
 
 
 class ModelError(Exception):
