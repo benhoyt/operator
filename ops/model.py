@@ -53,6 +53,7 @@ class Model:
     def __init__(self, meta: 'ops.charm.CharmMeta', backend: '_ModelBackend'):
         self._cache = _ModelCache(backend)
         self._backend = backend
+        self._meta = meta
         self._unit = self.get_unit(self._backend.unit_name)
         self._relations = RelationMapping(meta.relations, self.unit, self._backend, self._cache)
         self._config = ConfigData(self._backend)
@@ -118,7 +119,11 @@ class Model:
         Internally this uses a cache, so asking for the same unit two times will
         return the same object.
         """
-        return self._cache.get(Unit, unit_name)
+        if unit_name == self._backend.unit_name:
+            container_names = tuple(self._meta.containers)
+        else:
+            container_names = ()
+        return self._cache.get(Unit, unit_name, container_names)
 
     def get_app(self, app_name: str) -> 'Application':
         """Get an application by name.
@@ -161,13 +166,6 @@ class Model:
             falls back to the default binding for the relation name.
         """
         return self._bindings.get(binding_key)
-
-    def get_container(self, container_name: str) -> 'Container':
-        """Get a (Kubernetes) container by name.
-
-        TODO: use self._cache?
-        """
-        return Container(container_name)
 
 
 class _ModelCache:
@@ -269,7 +267,7 @@ class Unit:
         app: The Application the unit is a part of.
     """
 
-    def __init__(self, name, backend, cache):
+    def __init__(self, name, container_names, backend, cache):
         self.name = name
 
         app_name = name.split('/')[0]
@@ -279,6 +277,7 @@ class Unit:
         self._cache = cache
         self._is_our_unit = self.name == self._backend.unit_name
         self._status = None
+        self._containers = {name: Container(name) for name in container_names}
 
     def _invalidate(self):
         self._status = None
@@ -353,6 +352,17 @@ class Unit:
             raise TypeError("workload version must be a str, not {}: {!r}".format(
                 type(version).__name__, version))
         self._backend.application_version_set(version)
+
+    @property
+    def containers(self) -> typing.Dict:
+        """Return a dict of (Kubernetes) containers indexed by name."""
+        if not self._is_our_unit:
+            raise RuntimeError('cannot get container for a remote unit {}'.format(self))
+        return self._containers
+
+    def get_container(self, container_name: str) -> 'Container':
+        """Get a (Kubernetes) container by name."""
+        return self.containers[container_name]
 
 
 class LazyMapping(Mapping, ABC):
@@ -648,7 +658,10 @@ class Relation:
             self.app = our_unit.app
         try:
             for unit_name in backend.relation_list(self.id):
-                unit = cache.get(Unit, unit_name)
+                if unit_name == our_unit.name:
+                    unit = our_unit
+                else:
+                    unit = cache.get(Unit, unit_name, ())
                 self.units.add(unit)
                 if self.app is None:
                     self.app = unit.app
@@ -1005,65 +1018,38 @@ class Container:
 
         socket_path = '/charm/containers/{}/pebble/.pebble.socket'.format(name)
         self._pebble = pebble.API(socket_path=socket_path)
-        self._workload = ContainerWorkload(self._pebble)
-
-    # TODO: could also be .services and ContainerServices?
-
-    @property
-    def workload(self) -> 'ContainerWorkload':
-        """Return the workload instance for this container.
-
-        A ContainerWorkload instance is a higher-level wrapper around the
-        Pebble API.
-        """
-        return self._workload
 
     @property
     def pebble(self) -> 'pebble.API':
         """Return the low-level Pebble API instance for this container."""
         return self._pebble
 
-
-class ContainerWorkload:
-    """A higher-level wrapper around the Pebble API for a workload container."""
-
-    def __init__(self, pebble):
-        self._pebble = pebble
-
-    def autostart_services(self):
+    def autostart(self):
         """Autostart all default services."""
         self._pebble.autostart_services()
 
-    def start_service(self, service_name: str):
-        """Start a single service by name."""
-        self._pebble.start_services([service_name])
+    def start(self, *service_names: typing.List[str]):
+        """Start given service(s) by name."""
+        self._pebble.start_services(service_names)
 
-    def stop_service(self, service_name: str):
-        """Stop a single service by name."""
-        self._pebble.stop_services([service_name])
+    def stop(self, *service_names: typing.List[str]):
+        """Stop given service(s) by name."""
+        self._pebble.stop_services(service_names)
 
-    # TODO: should these functions take/return a Dict, or a Pythonic
-    # pebble.Config object?
-
-    # TODO: this functionality needs to be implemented in Pebble still
-
-    def add_config_layer(self, config: typing.Union[str, typing.Dict]):
+    def add_layer(self, config: typing.Union[str, typing.Dict, 'pebble.Config']):
         """Dynamically add a service (Pebble) configuration layer.
 
         Args:
-            config: A YAML string or config dict containing the Pebble
-                configuration layer.
+            config: A YAML string, config dict, or pebble.Config object
+                containing the Pebble configuration layer to add
         """
-        if not isinstance(config, str):
-            config = yaml.dump(config, Dumper=_DefaultDumper)
-        self._pebble.add_config_layer(config)
+        if isinstance(config, (str, dict)):
+            config = pebble.Config(config)
+        self._pebble.add_layer(config)
 
-    def get_rendered_config(self) -> typing.Dict:
-        """Fetch and return the rendered configuration.
-
-        This returns the rendered configuration from merging all layers.
-        """
-        return self._pebble.get_rendered_config()
+    def get_config(self) -> 'pebble.Config':
+        """Fetch the flattened configuration as a pebble.Config object."""
+        return self._pebble.get_config()
 
 
 class ModelError(Exception):

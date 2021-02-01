@@ -14,7 +14,7 @@
 
 """Client for the Pebble API (HTTP over Unix socket)."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import datetime
 import enum
 import http.client
@@ -26,6 +26,15 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+import yaml
+
+
+_DefaultDumper = None  # type: Any
+if yaml.__with_libyaml__:
+    _DefaultDumper = yaml.CSafeDumper
+else:
+    _DefaultDumper = yaml.SafeDumper
 
 
 _default_timeout = object()
@@ -308,6 +317,82 @@ class Change:
                 ).format(self=self)
 
 
+class Config:
+    """Represents a Pebble config layer (or flattened configuration).
+
+    This is not documented, but captured in code here:
+    https://github.com/canonical/pebble/blob/master/internal/setup/setup.go
+    """
+
+    def __init__(self, raw: Union[str, Dict]):
+        if isinstance(raw, str):
+            d = yaml.safe_load(raw)
+        else:
+            d = raw
+        self.summary = d.get('summary', '')
+        self.description = d.get('description', '')
+        self.services = {name: ConfigService(name, service)
+                         for name, service in d.get('services', {}).items()}
+
+    def to_yaml(self) -> str:
+        """Convert this config to its YAML representation."""
+        return yaml.dump(self.to_dict(), Dumper=_DefaultDumper)
+
+    def to_dict(self) -> Dict:
+        """Convert this config to a dict representation."""
+        return {
+            'summary': self.summary,
+            'description': self.description,
+            'services': {name: service.to_dict() for name, service in self.services.items()},
+        }
+        raise NotImplementedError
+
+    def __repr__(self) -> str:
+        return 'Config({!r})'.format(self.to_dict())
+
+    __str__ = to_yaml
+
+
+class ConfigService:
+    """Represents a service description in a Pebble configuration layer."""
+
+    def __init__(self, name: str, raw: Dict):
+        self.name = name
+        self.summary = raw.get('summary', '')
+        self.description = raw.get('description', '')
+        self.default = raw.get('default', '')
+        self.override = raw.get('override', '')
+        self.command = raw.get('command', '')
+        self.after = raw.get('after', [])
+        self.before = raw.get('before', [])
+        self.requires = raw.get('requires', [])
+        self.environment = raw.get('environment') or {}
+
+    def to_yaml(self) -> str:
+        """Convert this service object to its YAML representation."""
+        return yaml.dump(self.to_dict(), Dumper=_DefaultDumper)
+
+    def to_dict(self) -> Dict:
+        """Convert this service object to its dict representation."""
+        return {
+            'name': self.name,
+            'summary': self.summary,
+            'description': self.description,
+            'default': self.default,
+            'override': self.override,
+            'command': self.command,
+            'after': self.after,
+            'before': self.before,
+            'requires': self.requires,
+            'environment': self.environment,
+        }
+
+    def __repr__(self) -> str:
+        return 'ConfigService({!r})'.format(self.to_dict())
+
+    __str__ = to_yaml
+
+
 class API:
     """Pebble API client."""
 
@@ -450,6 +535,14 @@ class API:
 
         raise TimeoutError(
             'timed out waiting for change {} ({} seconds)'.format(change_id, timeout))
+
+    def add_layer(self, config: Config):
+        """Dynamically add a layer to the Pebble configuration."""
+        raise NotImplementedError
+
+    def get_config(self) -> Config:
+        """Dynamically add a layer to the Pebble configuration."""
+        raise NotImplementedError
 
 
 # Make useable as a command line client for local testing

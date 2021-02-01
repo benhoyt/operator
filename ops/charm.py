@@ -687,6 +687,13 @@ class CharmMeta:
         self.extra_bindings = raw.get('extra-bindings', {})
         self.actions = {name: ActionMeta(name, action) for name, action in actions_raw.items()}
 
+        # Charm Metadata v2 (see https://discourse.charmhub.io/t/charm-metadata-v2/3674)
+        self.platforms = raw.get('platforms', [])
+        self.architectures = raw.get('architectures', [])
+        self.systems = [SystemMeta(system) for system in raw.get('systems', [])]
+        self.containers = {name: ContainerMeta(name, container)
+                           for name, container in raw.get('containers', {}).items()}
+
     @classmethod
     def from_yaml(
             cls, metadata: typing.Union[str, typing.TextIO],
@@ -821,3 +828,46 @@ class ActionMeta:
         self.description = raw.get('description', '')
         self.parameters = raw.get('params', {})  # {<parameter name>: <JSON Schema definition>}
         self.required = raw.get('required', [])  # [<parameter name>, ...]
+
+
+class SystemMeta:
+    """Metadata about a supported system.
+
+    Attributes:
+        os: Operating system name, e.g., "ubuntu"
+        channel: Channel of the OS, e.g., "20.04/stable"
+        resource: Name of OCI resource to use as the system
+    """
+
+    def __init__(self, raw):
+        self.os = raw.get('os', '')
+        self.channel = raw.get('channel', '')
+        self.resource = raw.get('resource', '')
+
+
+class ContainerMeta:
+    """Metadata about an individual container.
+
+    Attributes:
+        name: Name of container (key in the YAML)
+        systems: List of systems this container supports
+        mounts: List of mounted storage for this container
+    """
+
+    def __init__(self, name, raw):
+        self.name = name
+        self.systems = [SystemMeta(system) for system in raw.get('systems', [])]
+        self.mounts = [MountMeta(mount) for mount in raw.get('mounts', [])]
+
+
+class MountMeta:
+    """Metadata about a storage mount.
+
+    Attributes:
+        storage: Name of storage to mount from the charm storage
+        location: Mount location for filesystem stores
+    """
+
+    def __init__(self, raw):
+        self.storage = raw.get('storage', '')
+        self.location = raw.get('location', '')
