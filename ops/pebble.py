@@ -326,7 +326,7 @@ class Setup:
 
     def __init__(self, raw: Union[str, Dict] = None):
         if isinstance(raw, str):
-            d = yaml.safe_load(raw)
+            d = yaml.safe_load(raw) or {}
         else:
             d = raw or {}
         self.summary = d.get('summary', '')
@@ -369,14 +369,9 @@ class SetupService:
         self.requires = raw.get('requires', [])
         self.environment = raw.get('environment') or {}
 
-    def to_yaml(self) -> str:
-        """Convert this service object to its YAML representation."""
-        return yaml.dump(self.to_dict(), Dumper=_safe_dumper)
-
     def to_dict(self) -> Dict:
         """Convert this service object to its dict representation."""
         fields = [
-            ('name', self.name),
             ('summary', self.summary),
             ('description', self.description),
             ('default', self.default),
@@ -391,8 +386,6 @@ class SetupService:
 
     def __repr__(self) -> str:
         return 'SetupService({!r})'.format(self.to_dict())
-
-    __str__ = to_yaml
 
 
 class PebbleClient:
@@ -585,6 +578,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    if not args.command:
+        parser.error('argument command: required')
+
     socket_path = args.socket
     if socket_path is None:
         pebble_env = os.getenv('PEBBLE')
@@ -617,7 +613,7 @@ if __name__ == '__main__':
         elif args.command == 'warnings':
             result = client.get_warnings(select=WarningState(args.select))
         else:
-            parser.error('command required')
+            raise AssertionError("shouldn't happen")
     except urllib.error.HTTPError as e:
         print(e, file=sys.stderr)
         obj = json.load(e)

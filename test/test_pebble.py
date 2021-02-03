@@ -255,6 +255,122 @@ class TestTypes(unittest.TestCase):
         self.assertEqual(change.tasks, [])
 
 
+class TestSetup(unittest.TestCase):
+    def _assert_empty(self, setup):
+        self.assertEqual(setup.summary, '')
+        self.assertEqual(setup.description, '')
+        self.assertEqual(setup.services, {})
+        self.assertEqual(setup.to_dict(), {})
+
+    def test_no_args(self):
+        s = pebble.Setup()
+        self._assert_empty(s)
+
+    def test_dict(self):
+        s = pebble.Setup({})
+        self._assert_empty(s)
+
+        d = {
+            'summary': 'Sum Mary',
+            'description': 'The quick brown fox!',
+            'services': {
+                'foo': {
+                    'summary': 'Foo',
+                    'command': 'echo foo',
+                },
+                'bar': {
+                    'summary': 'Bar',
+                    'command': 'echo bar',
+                },
+            }
+        }
+        s = pebble.Setup(d)
+        self.assertEqual(s.summary, 'Sum Mary')
+        self.assertEqual(s.description, 'The quick brown fox!')
+        self.assertEqual(s.services['foo'].name, 'foo')
+        self.assertEqual(s.services['foo'].summary, 'Foo')
+        self.assertEqual(s.services['foo'].command, 'echo foo')
+        self.assertEqual(s.services['bar'].name, 'bar')
+        self.assertEqual(s.services['bar'].summary, 'Bar')
+        self.assertEqual(s.services['bar'].command, 'echo bar')
+
+        self.assertEqual(s.to_dict(), d)
+
+    def test_yaml(self):
+        s = pebble.Setup('')
+        self._assert_empty(s)
+
+        yaml = """description: The quick brown fox!
+services:
+  bar:
+    command: echo bar
+    summary: Bar
+  foo:
+    command: echo foo
+    summary: Foo
+summary: Sum Mary
+"""
+        s = pebble.Setup(yaml)
+        self.assertEqual(s.summary, 'Sum Mary')
+        self.assertEqual(s.description, 'The quick brown fox!')
+        self.assertEqual(s.services['foo'].name, 'foo')
+        self.assertEqual(s.services['foo'].summary, 'Foo')
+        self.assertEqual(s.services['foo'].command, 'echo foo')
+        self.assertEqual(s.services['bar'].name, 'bar')
+        self.assertEqual(s.services['bar'].summary, 'Bar')
+        self.assertEqual(s.services['bar'].command, 'echo bar')
+
+        self.assertEqual(s.to_yaml(), yaml)
+        self.assertEqual(str(s), yaml)
+
+
+class TestSetupService(unittest.TestCase):
+    def _assert_empty(self, service, name):
+        self.assertEqual(service.name, name)
+        self.assertEqual(service.summary, '')
+        self.assertEqual(service.description, '')
+        self.assertEqual(service.default, '')
+        self.assertEqual(service.override, '')
+        self.assertEqual(service.command, '')
+        self.assertEqual(service.after, [])
+        self.assertEqual(service.before, [])
+        self.assertEqual(service.requires, [])
+        self.assertEqual(service.environment, {})
+        self.assertEqual(service.to_dict(), {})
+
+    def test_name_only(self):
+        s = pebble.SetupService('Name 0')
+        self._assert_empty(s, 'Name 0')
+
+    def test_dict(self):
+        s = pebble.SetupService('Name 1', {})
+        self._assert_empty(s, 'Name 1')
+
+        d = {
+            'summary': 'Sum Mary',
+            'description': 'The lazy quick brown',
+            'default': 'Dee Fault',
+            'override': 'override',
+            'command': 'echo sum mary',
+            'after': ['a1', 'a2'],
+            'before': ['b1', 'b2'],
+            'requires': ['r1', 'r2'],
+            'environment': {'k1': 'v1', 'k2': 'v2'},
+        }
+        s = pebble.SetupService('Name 2', d)
+        self.assertEqual(s.name, 'Name 2')
+        self.assertEqual(s.description, 'The lazy quick brown')
+        self.assertEqual(s.default, 'Dee Fault')
+        self.assertEqual(s.override, 'override')
+        self.assertEqual(s.command, 'echo sum mary')
+        self.assertEqual(s.after, ['a1', 'a2'])
+        self.assertEqual(s.before, ['b1', 'b2'])
+        self.assertEqual(s.requires, ['r1', 'r2'])
+        self.assertEqual(s.environment, {'k1': 'v1', 'k2': 'v2'})
+
+        self.assertEqual(s.to_dict(), d)
+
+
 class MockClient(pebble.PebbleClient):
     def __init__(self):
         self.requests = []
@@ -270,6 +386,11 @@ class TestClient(unittest.TestCase):
 
     def setUp(self):
         self.client = MockClient()
+
+    def test_client_init(self):
+        pebble.PebbleClient(socket_path='foo')  # test that constructor runs
+        with self.assertRaises(ValueError):
+            pebble.PebbleClient()  # socket_path arg required
 
     def test_get_system_info(self):
         self.client.responses.append({
