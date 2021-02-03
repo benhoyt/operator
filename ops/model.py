@@ -52,8 +52,8 @@ class Model:
 
     def __init__(self, meta: 'ops.charm.CharmMeta', backend: '_ModelBackend'):
         self._cache = _ModelCache(backend)
+        backend._meta = meta  # TODO(benhoyt) - figure out proper way to do this
         self._backend = backend
-        self._meta = meta
         self._unit = self.get_unit(self._backend.unit_name)
         self._relations = RelationMapping(meta.relations, self.unit, self._backend, self._cache)
         self._config = ConfigData(self._backend)
@@ -119,11 +119,7 @@ class Model:
         Internally this uses a cache, so asking for the same unit two times will
         return the same object.
         """
-        if unit_name == self._backend.unit_name:
-            container_names = tuple(self._meta.containers)
-        else:
-            container_names = ()
-        return self._cache.get(Unit, unit_name, container_names)
+        return self._cache.get(Unit, unit_name)
 
     def get_app(self, app_name: str) -> 'Application':
         """Get an application by name.
@@ -267,7 +263,7 @@ class Unit:
         app: The Application the unit is a part of.
     """
 
-    def __init__(self, name, container_names, backend, cache):
+    def __init__(self, name, backend, cache):
         self.name = name
 
         app_name = name.split('/')[0]
@@ -277,7 +273,9 @@ class Unit:
         self._cache = cache
         self._is_our_unit = self.name == self._backend.unit_name
         self._status = None
-        self._containers = {name: Container(name) for name in container_names}
+
+        if self._is_our_unit:
+            self._containers = {name: Container(name) for name in backend._meta.containers}
 
     def _invalidate(self):
         self._status = None
@@ -354,14 +352,14 @@ class Unit:
         self._backend.application_version_set(version)
 
     @property
-    def containers(self) -> typing.Dict:
-        """Return a dict of (Kubernetes) containers indexed by name."""
+    def containers(self) -> typing.Dict[str, 'Container']:
+        """Return a dict of containers indexed by name."""
         if not self._is_our_unit:
             raise RuntimeError('cannot get container for a remote unit {}'.format(self))
         return self._containers
 
     def get_container(self, container_name: str) -> 'Container':
-        """Get a (Kubernetes) container by name."""
+        """Get a single container by name."""
         return self.containers[container_name]
 
 
@@ -658,10 +656,7 @@ class Relation:
             self.app = our_unit.app
         try:
             for unit_name in backend.relation_list(self.id):
-                if unit_name == our_unit.name:
-                    unit = our_unit
-                else:
-                    unit = cache.get(Unit, unit_name, ())
+                unit = cache.get(Unit, unit_name)
                 self.units.add(unit)
                 if self.app is None:
                     self.app = unit.app
@@ -1007,7 +1002,7 @@ class Storage:
 
 
 class Container:
-    """Represents a named (Kubernetes) container in an application.
+    """Represents a named container in a unit.
 
     Attributes:
         name: The name of the container from metadata.yaml (eg, 'postgres').
@@ -1017,11 +1012,11 @@ class Container:
         self.name = name
 
         socket_path = '/charm/containers/{}/pebble/.pebble.socket'.format(name)
-        self._pebble = pebble.API(socket_path=socket_path)
+        self._pebble = pebble.PebbleClient(socket_path=socket_path)
 
     @property
-    def pebble(self) -> 'pebble.API':
-        """Return the low-level Pebble API instance for this container."""
+    def pebble(self) -> 'pebble.PebbleClient':
+        """Return the low-level Pebble client instance for this container."""
         return self._pebble
 
     def autostart(self):
@@ -1036,20 +1031,21 @@ class Container:
         """Stop given service(s) by name."""
         self._pebble.stop_services(service_names)
 
-    def add_layer(self, config: typing.Union[str, typing.Dict, 'pebble.Config']):
-        """Dynamically add a service (Pebble) configuration layer.
+    def add_layer(self, setup: typing.Union[str, typing.Dict, 'pebble.Setup']):
+        """Dynamically add a service (Pebble) setup layer.
 
         Args:
-            config: A YAML string, config dict, or pebble.Config object
-                containing the Pebble configuration layer to add
+            setup: A YAML string, setup dict, or pebble.Setup object
+                containing the Pebble setup layer to add.
         """
-        if isinstance(config, (str, dict)):
-            config = pebble.Config(config)
-        self._pebble.add_layer(config)
+        if isinstance(setup, dict):
+            setup = pebble.Setup(setup)
+        self._pebble.add_layer(setup)
 
-    def get_config(self) -> 'pebble.Config':
-        """Fetch the flattened configuration as a pebble.Config object."""
-        return self._pebble.get_config()
+    def get_setup(self) -> 'pebble.Setup':
+        """Fetch the flattened setup as a pebble.Setup object."""
+        setup_yaml = self._pebble.get_setup()
+        return pebble.Setup(setup_yaml)
 
 
 class ModelError(Exception):

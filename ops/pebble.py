@@ -30,11 +30,11 @@ import urllib.request
 import yaml
 
 
-_DefaultDumper = None  # type: Any
+_safe_dumper = None  # type: Any
 if yaml.__with_libyaml__:
-    _DefaultDumper = yaml.CSafeDumper
+    _safe_dumper = yaml.CSafeDumper
 else:
-    _DefaultDumper = yaml.SafeDumper
+    _safe_dumper = yaml.SafeDumper
 
 
 _default_timeout = object()
@@ -89,7 +89,7 @@ def _parse_timestamp(s):
 
 
 class ServiceError(Exception):
-    """Raised by API.wait_change when a service change is ready but has an error."""
+    """Raised by wait_change() when a service change is ready but has an error."""
 
     def __init__(self, err, change):
         super().__init__(err)
@@ -98,14 +98,14 @@ class ServiceError(Exception):
 
 
 class WarningState(enum.Enum):
-    """Enum of states for API.get_warnings() select parameter."""
+    """Enum of states for get_warnings() select parameter."""
 
     ALL = 'all'
     PENDING = 'pending'
 
 
 class ChangeState(enum.Enum):
-    """Enum of states for API.get_changes() select parameter."""
+    """Enum of states for get_changes() select parameter."""
 
     ALL = 'all'
     IN_PROGRESS = 'in-progress'
@@ -317,47 +317,48 @@ class Change:
                 ).format(self=self)
 
 
-class Config:
-    """Represents a Pebble config layer (or flattened configuration).
+class Setup:
+    """Represents a Pebble setup layer (or flattened setup).
 
     This is not documented, but captured in code here:
     https://github.com/canonical/pebble/blob/master/internal/setup/setup.go
     """
 
-    def __init__(self, raw: Union[str, Dict]):
+    def __init__(self, raw: Union[str, Dict] = None):
         if isinstance(raw, str):
             d = yaml.safe_load(raw)
         else:
-            d = raw
+            d = raw or {}
         self.summary = d.get('summary', '')
         self.description = d.get('description', '')
-        self.services = {name: ConfigService(name, service)
+        self.services = {name: SetupService(name, service)
                          for name, service in d.get('services', {}).items()}
 
     def to_yaml(self) -> str:
-        """Convert this config to its YAML representation."""
-        return yaml.dump(self.to_dict(), Dumper=_DefaultDumper)
+        """Convert this setup to its YAML representation."""
+        return yaml.dump(self.to_dict(), Dumper=_safe_dumper)
 
     def to_dict(self) -> Dict:
-        """Convert this config to a dict representation."""
-        return {
-            'summary': self.summary,
-            'description': self.description,
-            'services': {name: service.to_dict() for name, service in self.services.items()},
-        }
-        raise NotImplementedError
+        """Convert this setup to a dict representation."""
+        fields = [
+            ('summary', self.summary),
+            ('description', self.description),
+            ('services', {name: service.to_dict() for name, service in self.services.items()})
+        ]
+        return {name: value for name, value in fields if value}
 
     def __repr__(self) -> str:
-        return 'Config({!r})'.format(self.to_dict())
+        return 'Setup({!r})'.format(self.to_dict())
 
     __str__ = to_yaml
 
 
-class ConfigService:
-    """Represents a service description in a Pebble configuration layer."""
+class SetupService:
+    """Represents a service description in a Pebble setup layer."""
 
-    def __init__(self, name: str, raw: Dict):
+    def __init__(self, name: str, raw: Dict = None):
         self.name = name
+        raw = raw or {}
         self.summary = raw.get('summary', '')
         self.description = raw.get('description', '')
         self.default = raw.get('default', '')
@@ -370,35 +371,42 @@ class ConfigService:
 
     def to_yaml(self) -> str:
         """Convert this service object to its YAML representation."""
-        return yaml.dump(self.to_dict(), Dumper=_DefaultDumper)
+        return yaml.dump(self.to_dict(), Dumper=_safe_dumper)
 
     def to_dict(self) -> Dict:
         """Convert this service object to its dict representation."""
-        return {
-            'name': self.name,
-            'summary': self.summary,
-            'description': self.description,
-            'default': self.default,
-            'override': self.override,
-            'command': self.command,
-            'after': self.after,
-            'before': self.before,
-            'requires': self.requires,
-            'environment': self.environment,
-        }
+        fields = [
+            ('name', self.name),
+            ('summary', self.summary),
+            ('description', self.description),
+            ('default', self.default),
+            ('override', self.override),
+            ('command', self.command),
+            ('after', self.after),
+            ('before', self.before),
+            ('requires', self.requires),
+            ('environment', self.environment),
+        ]
+        return {name: value for name, value in fields if value}
 
     def __repr__(self) -> str:
-        return 'ConfigService({!r})'.format(self.to_dict())
+        return 'SetupService({!r})'.format(self.to_dict())
 
     __str__ = to_yaml
 
 
-class API:
+class PebbleClient:
     """Pebble API client."""
 
     def __init__(self, socket_path=None, opener=None, base_url='http://localhost', timeout=5.0):
-        """Initialize an instance. Defaults to Unix socket "$PEBBLE/.pebble.socket"."""
+        """Initialize a client instance.
+
+        Defaults to using a Unix socket at socket_path (which must be specified
+        unless a custom opener is provided).
+        """
         if opener is None:
+            if socket_path is None:
+                raise ValueError('no socket path provided')
             opener = self._get_default_opener(socket_path)
         self.opener = opener
         self.base_url = base_url
@@ -406,16 +414,7 @@ class API:
 
     @classmethod
     def _get_default_opener(cls, socket_path):
-        """Build the default urllib opener to use for requests.
-
-        If socket_path is None, use "$PEBBLE/.pebble.socket".
-        """
-        if socket_path is None:
-            PEBBLE = os.getenv('PEBBLE')
-            if not PEBBLE:
-                raise ValueError('You must specify socket_path or set $PEBBLE')
-            socket_path = os.path.join(PEBBLE, '.pebble.socket')
-
+        """Build the default urllib opener to use for requests."""
         opener = urllib.request.OpenerDirector()
         opener.add_handler(_UnixSocketHandler(socket_path))
         opener.add_handler(urllib.request.HTTPDefaultErrorHandler())
@@ -424,7 +423,7 @@ class API:
         return opener
 
     def _request(self, method: str, path: str, query: Dict = None, body: Dict = None) -> Dict:
-        """Make a request with the given HTTP method and path to the Pebble API.
+        """Make a request with the given HTTP method and path to the Pebble client.
 
         If query dict is provided, it is encoded and appended as a query string
         to the URL. If body dict is provided, it is serialied as JSON and used
@@ -536,13 +535,13 @@ class API:
         raise TimeoutError(
             'timed out waiting for change {} ({} seconds)'.format(change_id, timeout))
 
-    def add_layer(self, config: Config):
-        """Dynamically add a layer to the Pebble configuration."""
-        raise NotImplementedError
+    def add_layer(self, setup: Union[str, Setup]):
+        """Dynamically add a layer to the Pebble setup."""
+        raise NotImplementedError('add_layer not yet implemented in Pebble')
 
-    def get_config(self) -> Config:
-        """Dynamically add a layer to the Pebble configuration."""
-        raise NotImplementedError
+    def get_setup(self) -> str:
+        """Get the flattened setup as a YAML string."""
+        raise NotImplementedError('get_setup not yet implemented in Pebble')
 
 
 # Make useable as a command line client for local testing
@@ -586,39 +585,47 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    try:
-        api = API(socket_path=args.socket)
-    except ValueError as e:
-        print(e, file=sys.stderr)
-        sys.exit(1)
+    socket_path = args.socket
+    if socket_path is None:
+        pebble_env = os.getenv('PEBBLE')
+        if not pebble_env:
+            print('cannot create Pebble client (set PEBBLE or specify --socket)', file=sys.stderr)
+            sys.exit(1)
+        socket_path = os.path.join(pebble_env, '.pebble.socket')
+
+    client = PebbleClient(socket_path=socket_path)
 
     try:
         result = None  # type: Any
         if args.command == 'abort':
-            result = api.abort_change(ChangeID(args.change_id))
+            result = client.abort_change(ChangeID(args.change_id))
         elif args.command == 'ack':
             timestamp = args.timestamp or datetime.datetime.now(tz=datetime.timezone.utc)
-            result = api.ack_warnings(timestamp)
+            result = client.ack_warnings(timestamp)
         elif args.command == 'autostart':
-            result = api.autostart_services()
+            result = client.autostart_services()
         elif args.command == 'change':
-            result = api.get_change(ChangeID(args.change_id))
+            result = client.get_change(ChangeID(args.change_id))
         elif args.command == 'changes':
-            result = api.get_changes(select=ChangeState(args.select), service=args.service)
+            result = client.get_changes(select=ChangeState(args.select), service=args.service)
         elif args.command == 'start':
-            result = api.start_services(args.service)
+            result = client.start_services(args.service)
         elif args.command == 'stop':
-            result = api.stop_services(args.service)
+            result = client.stop_services(args.service)
         elif args.command == 'system-info':
-            result = api.get_system_info()
+            result = client.get_system_info()
         elif args.command == 'warnings':
-            result = api.get_warnings(select=WarningState(args.select))
+            result = client.get_warnings(select=WarningState(args.select))
         else:
             parser.error('command required')
     except urllib.error.HTTPError as e:
         print(e, file=sys.stderr)
         obj = json.load(e)
         print(json.dumps(obj, sort_keys=True, indent=4), file=sys.stderr)
+        sys.exit(1)
+    except urllib.error.URLError as e:
+        print('cannot connect to Pebble socket {!r}: {}'.format(socket_path, e.reason),
+              file=sys.stderr)
         sys.exit(1)
     except ServiceError as e:
         print('ServiceError:', e.err, file=sys.stderr)

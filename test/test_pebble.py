@@ -255,7 +255,7 @@ class TestTypes(unittest.TestCase):
         self.assertEqual(change.tasks, [])
 
 
-class MockAPI(pebble.API):
+class MockClient(pebble.PebbleClient):
     def __init__(self):
         self.requests = []
         self.responses = []
@@ -265,14 +265,14 @@ class MockAPI(pebble.API):
         return self.responses.pop(0)
 
 
-class TestAPI(unittest.TestCase):
+class TestClient(unittest.TestCase):
     maxDiff = None
 
     def setUp(self):
-        self.api = MockAPI()
+        self.client = MockClient()
 
     def test_get_system_info(self):
-        self.api.responses.append({
+        self.client.responses.append({
             "result": {
                 "version": "1.2.3",
                 "extra-field": "foo",
@@ -281,9 +281,9 @@ class TestAPI(unittest.TestCase):
             "status-code": 200,
             "type": "sync"
         })
-        info = self.api.get_system_info()
+        info = self.client.get_system_info()
         self.assertEqual(info.version, '1.2.3')
-        self.assertEqual(self.api.requests, [
+        self.assertEqual(self.client.requests, [
             ('GET', '/v1/system-info', None, None),
         ])
 
@@ -294,29 +294,29 @@ class TestAPI(unittest.TestCase):
             "status-code": 200,
             "type": "sync"
         }
-        self.api.responses.append(empty)
-        warnings = self.api.get_warnings()
+        self.client.responses.append(empty)
+        warnings = self.client.get_warnings()
         self.assertEqual(warnings, [])
 
-        self.api.responses.append(empty)
-        warnings = self.api.get_warnings(select=pebble.WarningState.ALL)
+        self.client.responses.append(empty)
+        warnings = self.client.get_warnings(select=pebble.WarningState.ALL)
         self.assertEqual(warnings, [])
 
-        self.assertEqual(self.api.requests, [
+        self.assertEqual(self.client.requests, [
             ('GET', '/v1/warnings', {'select': 'pending'}, None),
             ('GET', '/v1/warnings', {'select': 'all'}, None),
         ])
 
     def test_ack_warnings(self):
-        self.api.responses.append({
+        self.client.responses.append({
             "result": 0,
             "status": "OK",
             "status-code": 200,
             "type": "sync"
         })
-        num = self.api.ack_warnings(datetime_nzdt(2021, 1, 28, 15, 11, 0))
+        num = self.client.ack_warnings(datetime_nzdt(2021, 1, 28, 15, 11, 0))
         self.assertEqual(num, 0)
-        self.assertEqual(self.api.requests, [
+        self.assertEqual(self.client.requests, [
             ('POST', '/v1/warnings', None, {
                 'action': 'okay',
                 'timestamp': '2021-01-28T15:11:00+13:00',
@@ -382,19 +382,19 @@ class TestAPI(unittest.TestCase):
             "status-code": 200,
             "type": "sync"
         }
-        self.api.responses.append(empty)
-        changes = self.api.get_changes()
+        self.client.responses.append(empty)
+        changes = self.client.get_changes()
         self.assertEqual(changes, [])
 
-        self.api.responses.append(empty)
-        changes = self.api.get_changes(select=pebble.ChangeState.ALL)
+        self.client.responses.append(empty)
+        changes = self.client.get_changes(select=pebble.ChangeState.ALL)
         self.assertEqual(changes, [])
 
-        self.api.responses.append(empty)
-        changes = self.api.get_changes(select=pebble.ChangeState.ALL, service='foo')
+        self.client.responses.append(empty)
+        changes = self.client.get_changes(select=pebble.ChangeState.ALL, service='foo')
         self.assertEqual(changes, [])
 
-        self.api.responses.append({
+        self.client.responses.append({
             "result": [
                 self.get_mock_change_dict(),
             ],
@@ -402,11 +402,11 @@ class TestAPI(unittest.TestCase):
             "status-code": 200,
             "type": "sync"
         })
-        changes = self.api.get_changes()
+        changes = self.client.get_changes()
         self.assertEqual(len(changes), 1)
         self.assert_mock_change(changes[0])
 
-        self.assertEqual(self.api.requests, [
+        self.assertEqual(self.client.requests, [
             ('GET', '/v1/changes', {'select': 'in-progress'}, None),
             ('GET', '/v1/changes', {'select': 'all'}, None),
             ('GET', '/v1/changes', {'select': 'all', 'for': 'foo'}, None),
@@ -414,33 +414,33 @@ class TestAPI(unittest.TestCase):
         ])
 
     def test_get_change(self):
-        self.api.responses.append({
+        self.client.responses.append({
             "result": self.get_mock_change_dict(),
             "status": "OK",
             "status-code": 200,
             "type": "sync"
         })
-        change = self.api.get_change('70')
+        change = self.client.get_change('70')
         self.assert_mock_change(change)
-        self.assertEqual(self.api.requests, [
+        self.assertEqual(self.client.requests, [
             ('GET', '/v1/changes/70', None, None),
         ])
 
     def test_abort_change(self):
-        self.api.responses.append({
+        self.client.responses.append({
             "result": self.get_mock_change_dict(),
             "status": "OK",
             "status-code": 200,
             "type": "sync"
         })
-        change = self.api.abort_change('70')
+        change = self.client.abort_change('70')
         self.assert_mock_change(change)
-        self.assertEqual(self.api.requests, [
+        self.assertEqual(self.client.requests, [
             ('POST', '/v1/changes/70', None, {'action': 'abort'}),
         ])
 
     def _test_services_action(self, action, api_func, services):
-        self.api.responses.append({
+        self.client.responses.append({
             "change": "70",
             "result": None,
             "status": "Accepted",
@@ -449,7 +449,7 @@ class TestAPI(unittest.TestCase):
         })
         change = self.get_mock_change_dict()
         change['ready'] = False
-        self.api.responses.append({
+        self.client.responses.append({
             "result": change,
             "status": "OK",
             "status-code": 200,
@@ -457,7 +457,7 @@ class TestAPI(unittest.TestCase):
         })
         change = self.get_mock_change_dict()
         change['ready'] = True
-        self.api.responses.append({
+        self.client.responses.append({
             "result": change,
             "status": "OK",
             "status-code": 200,
@@ -465,14 +465,14 @@ class TestAPI(unittest.TestCase):
         })
         change_id = api_func()
         self.assertEqual(change_id, '70')
-        self.assertEqual(self.api.requests, [
+        self.assertEqual(self.client.requests, [
             ('POST', '/v1/services', None, {'action': action, 'services': services}),
             ('GET', '/v1/changes/70', None, None),
             ('GET', '/v1/changes/70', None, None),
         ])
 
     def _test_services_action_async(self, action, api_func, services):
-        self.api.responses.append({
+        self.client.responses.append({
             "change": "70",
             "result": None,
             "status": "Accepted",
@@ -481,32 +481,32 @@ class TestAPI(unittest.TestCase):
         })
         change_id = api_func(timeout=0)
         self.assertEqual(change_id, '70')
-        self.assertEqual(self.api.requests, [
+        self.assertEqual(self.client.requests, [
             ('POST', '/v1/services', None, {'action': action, 'services': services}),
         ])
 
     def test_autostart_services(self):
-        self._test_services_action('autostart', self.api.autostart_services, [])
+        self._test_services_action('autostart', self.client.autostart_services, [])
 
     def test_autostart_services_async(self):
-        self._test_services_action_async('autostart', self.api.autostart_services, [])
+        self._test_services_action_async('autostart', self.client.autostart_services, [])
 
     def test_start_services(self):
         def api_func():
-            return self.api.start_services(['svc'])
+            return self.client.start_services(['svc'])
         self._test_services_action('start', api_func, ['svc'])
 
     def test_start_services_async(self):
         def api_func(timeout=30):
-            return self.api.start_services(['svc'], timeout=timeout)
+            return self.client.start_services(['svc'], timeout=timeout)
         self._test_services_action_async('start', api_func, ['svc'])
 
     def test_stop_services(self):
         def api_func():
-            return self.api.stop_services(['svc'])
+            return self.client.stop_services(['svc'])
         self._test_services_action('stop', api_func, ['svc'])
 
     def test_stop_services_async(self):
         def api_func(timeout=30):
-            return self.api.stop_services(['svc'], timeout=timeout)
+            return self.client.stop_services(['svc'], timeout=timeout)
         self._test_services_action_async('stop', api_func, ['svc'])
