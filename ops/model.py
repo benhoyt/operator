@@ -51,8 +51,7 @@ class Model:
     """
 
     def __init__(self, meta: 'ops.charm.CharmMeta', backend: '_ModelBackend'):
-        self._cache = _ModelCache(backend)
-        backend._meta = meta  # TODO(benhoyt) - figure out proper way to do this
+        self._cache = _ModelCache(backend, meta)
         self._backend = backend
         self._unit = self.get_unit(self._backend.unit_name)
         self._relations = RelationMapping(meta.relations, self.unit, self._backend, self._cache)
@@ -166,8 +165,9 @@ class Model:
 
 class _ModelCache:
 
-    def __init__(self, backend):
+    def __init__(self, backend, meta):
         self._backend = backend
+        self._meta = meta
         self._weakrefs = weakref.WeakValueDictionary()
 
     def get(self, entity_type, *args):
@@ -275,7 +275,7 @@ class Unit:
         self._status = None
 
         if self._is_our_unit:
-            self._containers = {name: Container(name) for name in backend._meta.containers}
+            self._containers = {name: Container(name) for name in cache._meta.containers}
 
     def _invalidate(self):
         self._status = None
@@ -1008,11 +1008,13 @@ class Container:
         name: The name of the container from metadata.yaml (eg, 'postgres').
     """
 
-    def __init__(self, name):
+    def __init__(self, name, pebble_client=None):
         self.name = name
 
-        socket_path = '/charm/containers/{}/pebble/.pebble.socket'.format(name)
-        self._pebble = pebble.PebbleClient(socket_path=socket_path)
+        if pebble_client is None:
+            socket_path = '/charm/containers/{}/pebble/.pebble.socket'.format(name)
+            pebble_client = pebble.PebbleClient(socket_path=socket_path)
+        self._pebble = pebble_client
 
     @property
     def pebble(self) -> 'pebble.PebbleClient':
