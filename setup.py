@@ -74,7 +74,10 @@ version = {!r}
             # "Operating System :: Microsoft :: Windows",
         ],
         python_requires='>=3.5',
-        install_requires=["PyYAML"],
+        install_requires=[
+            "PyYAML",
+            "websocket-client==1.2.1",
+        ],
     )
 
 finally:

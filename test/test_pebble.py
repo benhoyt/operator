@@ -23,6 +23,8 @@ import unittest.mock
 import unittest.util
 import sys
 
+import websocket
+
 import ops.pebble as pebble
 import test.fake_pebble as fake_pebble
 from ops._private import yaml
@@ -1943,3 +1945,11 @@ class TestSocketClient(unittest.TestCase):
 
         finally:
             shutdown()
+
+
+# TODO: test!
+class TestExec(unittest.TestCase):
+    def test_exec(self):
+        client = MockClient()
+        ws = client.exec()
+        self.assertIsInstance(ws, websocket.WebSocket)

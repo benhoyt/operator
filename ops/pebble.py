@@ -35,6 +35,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import websocket
+
 from ops._private import yaml
 
 
@@ -1225,3 +1227,8 @@ class Client:
         }
         resp = self._request('POST', '/v1/files', None, body)
         self._raise_on_path_error(resp, path)
+
+    def exec(self, *args, **kwargs):
+        """TODO: test!"""
+        ws = websocket.WebSocket()
+        return ws
