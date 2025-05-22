@@ -149,3 +149,5 @@ Congratulations, you’ve just built your first Kubernetes charm using `ops`!
 - Read the [docs](https://ops.readthedocs.io/en/latest/).
 - Read our [Code of conduct](https://ubuntu.com/community/code-of-conduct) and join our [chat](https://matrix.to/#/#charmhub-ops:ubuntu.com) and [forum](https://discourse.charmhub.io/) or [open an issue](https://github.com/canonical/operator/issues).
 - Read our [CONTRIBUTING guide](https://github.com/canonical/operator/blob/main/HACKING.md) and contribute!
+
+TODO: test.
