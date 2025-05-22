@@ -32,6 +32,4 @@ jobs:
             refactor
             revert
             test
-          scopes: |
-            harness
-          requireScope: false
+          scopes: ""
